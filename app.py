@@ -11,6 +11,19 @@ if not os.path.exists("data/financial.db"):
     df = fetch_historical(period="2y")
     save_to_db(df)
     detect_anomalies(contamination=0.03)
+
+# Also create anomalies table if it doesn't exist
+import sqlite3
+DB_PATH = "data/financial.db"
+conn = sqlite3.connect(DB_PATH)
+table_check = conn.execute(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='anomalies'"
+).fetchone()
+conn.close()
+
+if not table_check:
+    from anomaly import detect_anomalies
+    detect_anomalies(contamination=0.03)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
