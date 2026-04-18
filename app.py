@@ -40,20 +40,21 @@ def load_data():
             pass
 
     # If no data fetched generate sample data
+# If no data fetched generate sample data
     if not all_data:
         n = 60
-        dates = pd.bdate_range(end=pd.Timestamp.today(), periods=n)
+        dates = [pd.Timestamp.today() - pd.Timedelta(days=x) for x in range(n-1, -1, -1)]
         for i, ticker in enumerate(TICKERS):
             np.random.seed(i)
-            close = 150 + np.cumsum(np.random.randn(n))
+            close = list(150 + np.cumsum(np.random.randn(n)))
             sample = pd.DataFrame({
-                "date": dates.tolist(),
+                "date": dates,
                 "ticker": [ticker] * n,
-                "open": (close * 0.99).tolist(),
-                "high": (close * 1.01).tolist(),
-                "low": (close * 0.98).tolist(),
-                "close": close.tolist(),
-                "volume": np.random.randint(1000000, 5000000, n).tolist()
+                "open": [c * 0.99 for c in close],
+                "high": [c * 1.01 for c in close],
+                "low": [c * 0.98 for c in close],
+                "close": close,
+                "volume": list(map(float, np.random.randint(1000000, 5000000, n)))
             })
             all_data.append(sample)
 
