@@ -42,15 +42,18 @@ def setup_database():
 setup_database()
 
 DB_PATH = "data/financial.db"
-
 def load_prices(ticker):
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql(
-        f"SELECT * FROM stock_prices WHERE ticker='{ticker}' ORDER BY date",
-        conn
-    )
+    try:
+        df = pd.read_sql(
+            f"SELECT * FROM stock_prices WHERE ticker='{ticker}' ORDER BY date",
+            conn
+        )
+        df["date"] = pd.to_datetime(df["date"])
+    except Exception:
+        df = pd.DataFrame(columns=["date", "ticker", "open", "high", 
+                                    "low", "close", "volume"])
     conn.close()
-    df["date"] = pd.to_datetime(df["date"])
     return df
 
 def load_anomalies(ticker):
@@ -114,10 +117,13 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Total Records", f"{len(prices):,}")
 with col2:
-    latest_close = prices["close"].iloc[-1]
-    prev_close = prices["close"].iloc[-2]
-    change = ((latest_close - prev_close) / prev_close) * 100
-    st.metric("Latest Close", f"${latest_close:.2f}", f"{change:.2f}%")
+    if len(prices) >= 2:
+        latest_close = prices["close"].iloc[-1]
+        prev_close = prices["close"].iloc[-2]
+        change = ((latest_close - prev_close) / prev_close) * 100
+        st.metric("Latest Close", f"${latest_close:.2f}", f"{change:.2f}%")
+    else:
+        st.metric("Latest Close", "N/A")
 with col3:
     anomaly_count = anomalies["is_anomaly"].sum()
     st.metric("Anomalies Detected", int(anomaly_count))
