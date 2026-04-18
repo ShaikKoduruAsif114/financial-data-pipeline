@@ -1,165 +1,115 @@
-import os
 import sys
-import sqlite3
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-
-DB_PATH = "data/financial.db"
-
-# ─── SETUP DATABASE SILENTLY ───────────────────────────────
-def setup_database():
-    from store import init_db, save_to_db
-    from fetch import fetch_historical
-    from anomaly import detect_anomalies
-
-    os.makedirs("data", exist_ok=True)
-    init_db()
-
-    conn = sqlite3.connect(DB_PATH)
-    count = conn.execute("SELECT COUNT(*) FROM stock_prices").fetchone()[0]
-    anomaly_table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='anomalies'"
-    ).fetchone()
-    conn.close()
-
-    if count == 0:
-        df = fetch_historical(period="3mo")
-        save_to_db(df)
-
-    if not anomaly_table:
-        detect_anomalies(contamination=0.03)
-
-setup_database()
-
-# ─── DATA LOADERS ──────────────────────────────────────────
-def load_prices(ticker):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql(
-            f"SELECT * FROM stock_prices WHERE ticker='{ticker}' ORDER BY date",
-            conn
-        )
-        conn.close()
-        df["date"] = pd.to_datetime(df["date"])
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["date","ticker","open","high","low","close","volume"])
-
-def load_anomalies(ticker):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql(
-            f"SELECT * FROM anomalies WHERE ticker='{ticker}' ORDER BY date",
-            conn
-        )
-        conn.close()
-        df["date"] = pd.to_datetime(df["date"])
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["date","ticker","close","daily_return",
-                                     "price_range","volume_change",
-                                     "is_anomaly","anomaly_score"])
-
-def load_all_anomalies():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql("SELECT * FROM anomalies ORDER BY date", conn)
-        conn.close()
-        df["date"] = pd.to_datetime(df["date"])
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["date","ticker","close","daily_return",
-                                     "price_range","volume_change",
-                                     "is_anomaly","anomaly_score"])
+import yfinance as yf
+from sklearn.ensemble import IsolationForest
 
 # ─── PAGE CONFIG ───────────────────────────────────────────
-import streamlit as st
-
 st.set_page_config(
     page_title="Financial Market Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
+TICKERS = ["AAPL", "MSFT", "GOOGL"]
+
+# ─── FETCH + CACHE DATA ────────────────────────────────────
+@st.cache_data(ttl=3600)
+def load_data():
+    all_data = []
+    for ticker in TICKERS:
+        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        if df.empty:
+            continue
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+        df.columns = [c.lower() for c in df.columns]
+        df["ticker"] = ticker
+        df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+        df = df.dropna()
+        all_data.append(df)
+    return pd.concat(all_data, ignore_index=True)
+
+@st.cache_data(ttl=3600)
+def run_anomaly_detection(df):
+    results = []
+    for ticker in df["ticker"].unique():
+        tdf = df[df["ticker"] == ticker].copy().sort_values("date")
+        tdf["daily_return"] = tdf["close"].pct_change()
+        tdf["price_range"] = (tdf["high"] - tdf["low"]) / tdf["close"]
+        tdf["volume_change"] = tdf["volume"].pct_change()
+        tdf = tdf.dropna()
+        if len(tdf) < 10:
+            continue
+        X = tdf[["daily_return", "price_range", "volume_change"]].values
+        model = IsolationForest(contamination=0.05, random_state=42)
+        tdf["is_anomaly"] = (model.fit_predict(X) == -1).astype(int)
+        tdf["anomaly_score"] = model.decision_function(X)
+        results.append(tdf)
+    return pd.concat(results, ignore_index=True)
+
+# ─── LOAD DATA ─────────────────────────────────────────────
+with st.spinner("Loading market data..."):
+    df = load_data()
+    anomaly_df = run_anomaly_detection(df)
+
+# ─── TITLE ─────────────────────────────────────────────────
 st.title("📈 Financial Market Intelligence Dashboard")
-st.caption("Automated pipeline with anomaly detection across 10 market tickers")
+st.caption("Live data with anomaly detection across market tickers")
 
 # ─── SIDEBAR ───────────────────────────────────────────────
-TICKERS = [
-    "AAPL"
-]
-
 st.sidebar.header("Controls")
 selected_ticker = st.sidebar.selectbox("Select Ticker", TICKERS)
 show_anomalies = st.sidebar.checkbox("Show Anomalies", value=True)
 
-# ─── LOAD DATA ─────────────────────────────────────────────
-prices = load_prices(selected_ticker)
-anomalies = load_anomalies(selected_ticker)
-all_anomalies = load_all_anomalies()
-
-# ─── SHOW LOADING MESSAGE IF NO DATA ───────────────────────
-if prices.empty:
-    st.warning("Data is still loading. Please wait 2-3 minutes and refresh.")
-    st.stop()
+# ─── FILTER DATA ───────────────────────────────────────────
+prices = df[df["ticker"] == selected_ticker].copy()
+anomalies = anomaly_df[anomaly_df["ticker"] == selected_ticker].copy()
+total_anomalies = int(anomalies["is_anomaly"].sum())
 
 # ─── TOP METRICS ───────────────────────────────────────────
 col1, col2, col3, col4 = st.columns(4)
-
 with col1:
-    st.metric("Total Records", f"{len(prices):,}")
+    st.metric("Total Records", f"{len(df):,}")
 with col2:
     if len(prices) >= 2:
-        latest_close = prices["close"].iloc[-1]
-        prev_close = prices["close"].iloc[-2]
-        change = ((latest_close - prev_close) / prev_close) * 100
-        st.metric("Latest Close", f"${latest_close:.2f}", f"{change:.2f}%")
-    else:
-        st.metric("Latest Close", "N/A")
+        latest = prices["close"].iloc[-1]
+        prev = prices["close"].iloc[-2]
+        change = ((latest - prev) / prev) * 100
+        st.metric("Latest Close", f"${latest:.2f}", f"{change:.2f}%")
 with col3:
-    anomaly_count = int(anomalies["is_anomaly"].sum()) if not anomalies.empty else 0
-    st.metric("Anomalies Detected", anomaly_count)
+    st.metric("Anomalies Detected", total_anomalies)
 with col4:
-    if not anomalies.empty and len(anomalies) > 0:
-        anomaly_rate = anomaly_count / len(anomalies) * 100
-        st.metric("Anomaly Rate", f"{anomaly_rate:.1f}%")
-    else:
-        st.metric("Anomaly Rate", "N/A")
+    rate = total_anomalies / len(anomalies) * 100 if len(anomalies) > 0 else 0
+    st.metric("Anomaly Rate", f"{rate:.1f}%")
 
 st.divider()
 
 # ─── PRICE CHART ───────────────────────────────────────────
 st.subheader(f"{selected_ticker} — Price History")
-
 fig = go.Figure()
 fig.add_trace(go.Scatter(
-    x=prices["date"],
-    y=prices["close"],
-    name="Close Price",
-    line=dict(color="#00b4d8", width=1.5)
+    x=prices["date"], y=prices["close"],
+    name="Close Price", line=dict(color="#00b4d8", width=1.5)
 ))
 
-if show_anomalies and not anomalies.empty:
-    anomaly_days = anomalies[anomalies["is_anomaly"] == 1]
-    anomaly_prices = prices[prices["date"].isin(anomaly_days["date"])]
+if show_anomalies:
+    anom = anomalies[anomalies["is_anomaly"] == 1]
+    anom_prices = prices[prices["date"].isin(anom["date"])]
     fig.add_trace(go.Scatter(
-        x=anomaly_prices["date"],
-        y=anomaly_prices["close"],
-        mode="markers",
-        name="Anomaly",
+        x=anom_prices["date"], y=anom_prices["close"],
+        mode="markers", name="Anomaly",
         marker=dict(color="red", size=8, symbol="x")
     ))
 
-fig.update_layout(
-    height=400,
-    template="plotly_dark",
-    xaxis_title="Date",
-    yaxis_title="Price (USD)",
-    legend=dict(orientation="h")
-)
+fig.update_layout(height=400, template="plotly_dark",
+                  xaxis_title="Date", yaxis_title="Price (USD)")
 st.plotly_chart(fig, use_container_width=True)
 
 # ─── VOLUME CHART ──────────────────────────────────────────
@@ -169,35 +119,23 @@ fig2 = px.bar(prices, x="date", y="volume",
 fig2.update_layout(height=250, template="plotly_dark")
 st.plotly_chart(fig2, use_container_width=True)
 
-# ─── ANOMALY TABLE ─────────────────────────────────────────
+# ─── ANOMALY SUMMARY ───────────────────────────────────────
 st.divider()
 st.subheader("🚨 Anomaly Summary — All Tickers")
-
-if not all_anomalies.empty:
-    summary = all_anomalies.groupby("ticker").agg(
-        total_days=("is_anomaly", "count"),
-        anomalies=("is_anomaly", "sum")
-    ).reset_index()
-    summary["anomaly_rate"] = (summary["anomalies"] / summary["total_days"] * 100).round(2)
-    summary = summary.sort_values("anomalies", ascending=False)
-    st.dataframe(summary, use_container_width=True)
-else:
-    st.info("Anomaly data loading...")
+summary = anomaly_df.groupby("ticker").agg(
+    total_days=("is_anomaly", "count"),
+    anomalies=("is_anomaly", "sum")
+).reset_index()
+summary["anomaly_rate_%"] = (summary["anomalies"] / summary["total_days"] * 100).round(2)
+st.dataframe(summary, use_container_width=True)
 
 # ─── RECENT ANOMALIES ──────────────────────────────────────
 st.subheader(f"📋 Recent Anomalies — {selected_ticker}")
-
-if not anomalies.empty:
-    recent = anomalies[anomalies["is_anomaly"] == 1].sort_values(
-        "date", ascending=False).head(10)
-    if not recent.empty:
-        recent = recent[["date","close","daily_return","price_range","anomaly_score"]]
-        recent["daily_return"] = (recent["daily_return"] * 100).round(2)
-        recent["price_range"] = (recent["price_range"] * 100).round(2)
-        recent["anomaly_score"] = recent["anomaly_score"].round(4)
-        recent.columns = ["Date","Close","Daily Return %","Price Range %","Anomaly Score"]
-        st.dataframe(recent, use_container_width=True)
-    else:
-        st.info("No anomalies found for this ticker.")
-else:
-    st.info("Anomaly data loading...")
+recent = anomalies[anomalies["is_anomaly"] == 1].sort_values(
+    "date", ascending=False).head(10)
+if not recent.empty:
+    recent = recent[["date", "close", "daily_return", "anomaly_score"]].copy()
+    recent["daily_return"] = (recent["daily_return"] * 100).round(2)
+    recent["anomaly_score"] = recent["anomaly_score"].round(4)
+    recent.columns = ["Date", "Close", "Daily Return %", "Anomaly Score"]
+    st.dataframe(recent, use_container_width=True)
