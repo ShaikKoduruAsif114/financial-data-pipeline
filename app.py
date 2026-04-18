@@ -1,3 +1,16 @@
+import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+# Auto-run pipeline if database doesn't exist
+if not os.path.exists("data/financial.db"):
+    from store import init_db, save_to_db
+    from fetch import fetch_historical
+    from anomaly import detect_anomalies
+    init_db()
+    df = fetch_historical(period="2y")
+    save_to_db(df)
+    detect_anomalies(contamination=0.03)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
