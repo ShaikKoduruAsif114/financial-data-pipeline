@@ -55,21 +55,30 @@ def load_prices(ticker):
 
 def load_anomalies(ticker):
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql(
-        f"SELECT * FROM anomalies WHERE ticker='{ticker}' ORDER BY date",
-        conn
-    )
+    try:
+        df = pd.read_sql(
+            f"SELECT * FROM anomalies WHERE ticker='{ticker}' ORDER BY date",
+            conn
+        )
+        df["date"] = pd.to_datetime(df["date"])
+    except Exception:
+        df = pd.DataFrame(columns=["date", "ticker", "close", "daily_return",
+                                    "price_range", "volume_change", 
+                                    "is_anomaly", "anomaly_score"])
     conn.close()
-    df["date"] = pd.to_datetime(df["date"])
     return df
 
 def load_all_anomalies():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT * FROM anomalies ORDER BY date", conn)
+    try:
+        df = pd.read_sql("SELECT * FROM anomalies ORDER BY date", conn)
+        df["date"] = pd.to_datetime(df["date"])
+    except Exception:
+        df = pd.DataFrame(columns=["date", "ticker", "close", "daily_return",
+                                    "price_range", "volume_change",
+                                    "is_anomaly", "anomaly_score"])
     conn.close()
-    df["date"] = pd.to_datetime(df["date"])
     return df
-
 # ─── PAGE CONFIG ───────────────────────────────────────────
 
 st.set_page_config(
