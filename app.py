@@ -26,7 +26,7 @@ def setup_database():
     conn.close()
 
     if count == 0:
-        df = fetch_historical(period="2y")
+        df = fetch_historical(period="3mo")
         save_to_db(df)
 
     if not anomaly_table:
@@ -89,8 +89,7 @@ st.caption("Automated pipeline with anomaly detection across 10 market tickers")
 
 # ─── SIDEBAR ───────────────────────────────────────────────
 TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "JPM",
-    "GS", "SPY", "BTC-USD", "GC=F", "CL=F"
+    "AAPL"
 ]
 
 st.sidebar.header("Controls")
