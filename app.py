@@ -1,34 +1,45 @@
 import os
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-
-# Auto-run pipeline if database doesn't exist
-if not os.path.exists("data/financial.db"):
-    from store import init_db, save_to_db
-    from fetch import fetch_historical
-    from anomaly import detect_anomalies
-    init_db()
-    df = fetch_historical(period="2y")
-    save_to_db(df)
-    detect_anomalies(contamination=0.03)
-
-# Also create anomalies table if it doesn't exist
 import sqlite3
-DB_PATH = "data/financial.db"
-conn = sqlite3.connect(DB_PATH)
-table_check = conn.execute(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name='anomalies'"
-).fetchone()
-conn.close()
-
-if not table_check:
-    from anomaly import detect_anomalies
-    detect_anomalies(contamination=0.03)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import sqlite3
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+DB_PATH = "data/financial.db"
+
+def setup_database():
+    """Run full pipeline if database or tables don't exist."""
+    from store import init_db, save_to_db
+    from fetch import fetch_historical
+    from anomaly import detect_anomalies
+
+    os.makedirs("data", exist_ok=True)
+    init_db()
+
+    # Check if stock_prices table has data
+    conn = sqlite3.connect(DB_PATH)
+    count = conn.execute("SELECT COUNT(*) FROM stock_prices").fetchone()[0]
+    
+    # Check if anomalies table exists
+    anomaly_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='anomalies'"
+    ).fetchone()
+    conn.close()
+
+    if count == 0:
+        st.info("Fetching market data for the first time... this takes 2-3 minutes.")
+        df = fetch_historical(period="2y")
+        save_to_db(df)
+
+    if not anomaly_table:
+        st.info("Running anomaly detection...")
+        detect_anomalies(contamination=0.03)
+
+# Run setup before anything else
+setup_database()
 
 DB_PATH = "data/financial.db"
 
