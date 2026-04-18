@@ -1,5 +1,6 @@
 import sys
 import os
+import numpy as np
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 import streamlit as st
@@ -21,9 +22,8 @@ TICKERS = ["AAPL", "MSFT", "GOOGL"]
 # ─── FETCH + CACHE DATA ────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_data():
-    import numpy as np
     all_data = []
-    
+
     for ticker in TICKERS:
         try:
             df = yf.download(ticker, period="3mo", interval="1d", progress=False)
@@ -39,20 +39,21 @@ def load_data():
         except Exception:
             pass
 
-    # If no data fetched, generate sample data
+    # If no data fetched generate sample data
     if not all_data:
-        dates = pd.date_range(end=pd.Timestamp.today(), periods=60, freq="B")
-        for ticker in TICKERS:
-            np.random.seed(42)
-            close = 150 + np.cumsum(np.random.randn(60))
+        n = 60
+        dates = pd.bdate_range(end=pd.Timestamp.today(), periods=n)
+        for i, ticker in enumerate(TICKERS):
+            np.random.seed(i)
+            close = 150 + np.cumsum(np.random.randn(n))
             sample = pd.DataFrame({
-                "date": dates,
-                "ticker": ticker,
-                "open": close * 0.99,
-                "high": close * 1.01,
-                "low": close * 0.98,
-                "close": close,
-                "volume": np.random.randint(1000000, 5000000, 60).astype(float)
+                "date": dates.tolist(),
+                "ticker": [ticker] * n,
+                "open": (close * 0.99).tolist(),
+                "high": (close * 1.01).tolist(),
+                "low": (close * 0.98).tolist(),
+                "close": close.tolist(),
+                "volume": np.random.randint(1000000, 5000000, n).tolist()
             })
             all_data.append(sample)
 
@@ -101,10 +102,12 @@ with col1:
     st.metric("Total Records", f"{len(df):,}")
 with col2:
     if len(prices) >= 2:
-        latest = prices["close"].iloc[-1]
-        prev = prices["close"].iloc[-2]
+        latest = float(prices["close"].iloc[-1])
+        prev = float(prices["close"].iloc[-2])
         change = ((latest - prev) / prev) * 100
         st.metric("Latest Close", f"${latest:.2f}", f"{change:.2f}%")
+    else:
+        st.metric("Latest Close", "N/A")
 with col3:
     st.metric("Anomalies Detected", total_anomalies)
 with col4:
@@ -130,8 +133,11 @@ if show_anomalies:
         marker=dict(color="red", size=8, symbol="x")
     ))
 
-fig.update_layout(height=400, template="plotly_dark",
-                  xaxis_title="Date", yaxis_title="Price (USD)")
+fig.update_layout(
+    height=400, template="plotly_dark",
+    xaxis_title="Date", yaxis_title="Price (USD)",
+    legend=dict(orientation="h")
+)
 st.plotly_chart(fig, use_container_width=True)
 
 # ─── VOLUME CHART ──────────────────────────────────────────
@@ -148,7 +154,9 @@ summary = anomaly_df.groupby("ticker").agg(
     total_days=("is_anomaly", "count"),
     anomalies=("is_anomaly", "sum")
 ).reset_index()
-summary["anomaly_rate_%"] = (summary["anomalies"] / summary["total_days"] * 100).round(2)
+summary["anomaly_rate_%"] = (
+    summary["anomalies"] / summary["total_days"] * 100
+).round(2)
 st.dataframe(summary, use_container_width=True)
 
 # ─── RECENT ANOMALIES ──────────────────────────────────────
@@ -161,3 +169,5 @@ if not recent.empty:
     recent["anomaly_score"] = recent["anomaly_score"].round(4)
     recent.columns = ["Date", "Close", "Daily Return %", "Anomaly Score"]
     st.dataframe(recent, use_container_width=True)
+else:
+    st.info("No anomalies found for this ticker.")
