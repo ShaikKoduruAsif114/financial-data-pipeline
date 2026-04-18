@@ -28,6 +28,15 @@ def init_db():
 
 def save_to_db(df):
     """Save dataframe to SQLite, skip duplicates."""
+    
+    # Fix multi-level columns if present
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    # Reset index if date is in index
+    if "date" not in df.columns:
+        df = df.reset_index()
+    
     conn = sqlite3.connect(DB_PATH)
     df["date"] = df["date"].astype(str)
     inserted = 0
