@@ -29,14 +29,20 @@ def init_db():
 def save_to_db(df):
     """Save dataframe to SQLite, skip duplicates."""
     
-    # Fix multi-level columns if present
+    # Reset index to bring date into columns
+    df = df.reset_index()
+    
+    # Flatten multi-level columns if present
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     
-    # Reset index if date is in index
-    if "date" not in df.columns:
-        df = df.reset_index()
+    # Rename Date to date if needed
+    df.columns = [c.lower() for c in df.columns]
     
+    if "date" not in df.columns:
+        print("ERROR: No date column found. Columns:", df.columns.tolist())
+        return
+
     conn = sqlite3.connect(DB_PATH)
     df["date"] = df["date"].astype(str)
     inserted = 0
